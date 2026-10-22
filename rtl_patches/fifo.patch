@@ -1,0 +1,22 @@
+--- vendor/stspu/hw/rtl/fifo.sv	2026-10-21 20:03:09.734692500 +0800
++++ mej_round_20261022/physical_20261022/src/rtl/fifo.sv	2026-10-22 10:33:39.928782900 +0800
+@@ -20,16 +20,13 @@
+ 
+   localparam DEPTH = 2**ADDR_L;
+ 
+-  logic [DEPTH-1 : 0] [DATA_L-1 : 0] mem_fifo;
++  (* ram_style="distributed" *) logic [DATA_L-1 : 0] mem_fifo [0:DEPTH-1];
+   logic [ADDR_L-1 : 0] wr_ptr, rd_ptr;
+   logic [ADDR_L : 0] cnt;
+ 
+   // write data
+-  always_ff @(posedge clk or negedge rstn) begin
+-    if (!rstn)
+-      mem_fifo <= 'x;
+-    else if (wr_en)
+-      mem_fifo[wr_ptr] <= wr_data;
++  always_ff @(posedge clk) begin
++    if (rstn && wr_en) mem_fifo[wr_ptr] <= wr_data;
+   end
+   always_ff @(posedge clk or negedge rstn) begin
+     if (!rstn)

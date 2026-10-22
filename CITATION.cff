@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite the accompanying paper once it is available."
+title: "SAS: Stable-Assignment Splitting for Sparse Triangular Accelerators"
+abstract: >-
+  Compiler transformation that preserves original-row compute-unit assignments
+  and submitted relative order while allocating only newly introduced partial
+  sums during long-row splitting for shared-memory sparse triangular solve
+  accelerators. Includes RTL repair patches, physical-implementation and
+  power-estimation flows, and independent checkers.
+keywords:
+  - sparse triangular solve
+  - dataflow accelerator
+  - graph transformation
+  - task mapping
+  - compiler scheduling
+license: MIT
+authors:
+  - family-names: "SAS"
+    given-names: "The"
+preferred-citation:
+  type: article
+  title: "SAS: Stable-Assignment Splitting for Sparse Triangular Accelerators"

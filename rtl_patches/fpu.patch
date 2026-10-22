@@ -1,0 +1,88 @@
+--- vendor/stspu/hw/rtl/fpu.sv	2026-10-21 20:03:09.735713200 +0800
++++ mej_round_20261022/physical_20261022/src/rtl/fpu.sv	2026-10-22 11:03:13.152815700 +0800
+@@ -1,56 +1,36 @@
+-/*
+-    * Last modified: 2024/12/2
+-    * Author: Qian Chen
+-*/
+-
+-// For functional simulation only, not synthesizable.
+-module fpu_add #(
+-  parameter EXP_L = 8,
+-  parameter MNT_L = 23
+-)(
+-  input  [EXP_L+MNT_L:0] in1,
+-  input  [EXP_L+MNT_L:0] in2,
+-  output [EXP_L+MNT_L:0] out
+-);
+-
+-  shortreal in1_real, in2_real, out_real;
+-  logic [EXP_L+MNT_L:0] out_d;
+-
++// The physical build uses AMD Floating-Point 7.1 IP. The original author's
++// shortreal operators are retained for full 64-CU functional replay because
++// this host's XSim BASIC license caps the elaborated IP instance count.
++module fpu_add #(parameter EXP_L=8, MNT_L=23)(
++  input [EXP_L+MNT_L:0] in1,in2, output [EXP_L+MNT_L:0] out);
++`ifdef PHYSICAL_FP_IP
++  fp_add_zero ip(.aclk(1'b0),.s_axis_a_tvalid(1'b1),.s_axis_a_tdata(in1),
++                 .s_axis_b_tvalid(1'b1),.s_axis_b_tdata(in2),
++                 .m_axis_result_tvalid(),.m_axis_result_tdata(out));
++`else
++  shortreal a,b,result;
+   always_comb begin
+-    in1_real = $bitstoshortreal(in1);
+-    in2_real = $bitstoshortreal(in2);
+-
+-    out_real = in1_real + in2_real;
+-
+-    out_d = $shortrealtobits(out_real);
++    a=$bitstoshortreal(in1);
++    b=$bitstoshortreal(in2);
++    result=a+b;
+   end
+-
+-  assign out = out_d;
+-
++  assign out=$shortrealtobits(result);
++`endif
+ endmodule
+ 
+-// For functional simulation only, not synthesizable.
+-module fpu_mul #(
+-  parameter EXP_L = 8, 
+-  parameter MNT_L = 23
+-)(
+-  input  [EXP_L+MNT_L:0] in1, 
+-  input  [EXP_L+MNT_L:0] in2, 
+-  output [EXP_L+MNT_L:0] out 
+-);
+-
+-  shortreal in1_real, in2_real, out_real;
+-  logic [EXP_L+MNT_L:0] out_d;
+-
++module fpu_mul #(parameter EXP_L=8, MNT_L=23)(
++  input [EXP_L+MNT_L:0] in1,in2, output [EXP_L+MNT_L:0] out);
++`ifdef PHYSICAL_FP_IP
++  fp_mul_zero ip(.aclk(1'b0),.s_axis_a_tvalid(1'b1),.s_axis_a_tdata(in1),
++                 .s_axis_b_tvalid(1'b1),.s_axis_b_tdata(in2),
++                 .m_axis_result_tvalid(),.m_axis_result_tdata(out));
++`else
++  shortreal a,b,result;
+   always_comb begin
+-    in1_real = $bitstoshortreal(in1);
+-    in2_real = $bitstoshortreal(in2);
+-
+-    out_real = in1_real * in2_real;
+-
+-    out_d = $shortrealtobits(out_real);
++    a=$bitstoshortreal(in1);
++    b=$bitstoshortreal(in2);
++    result=a*b;
+   end
+-
+-  assign out = out_d;
+-
++  assign out=$shortrealtobits(result);
++`endif
+ endmodule

@@ -1,0 +1,52 @@
+--- vendor/stspu/hw/rtl/rf.sv	2026-10-21 20:03:09.737698000 +0800
++++ mej_round_20261022/physical_20261022/src/rtl/rf.sv	2026-10-22 10:33:39.928782900 +0800
+@@ -1,40 +1,10 @@
+-/*
+-    * Last modified: 2024/12/2
+-    * Author: Qian Chen
+-*/
+-
+-module register_file # (
+-  parameter DATA_L = 32,
+-  parameter ADDR_L = 5
+-) (
+-  input                         clk,
+-  input                         rstn,
+-  input                         wr_en,
+-  input         [ADDR_L-1 : 0]  wr_addr,
+-  input         [DATA_L-1 : 0]  wr_data,
+-  input                         rd_en,
+-  input         [ADDR_L-1 : 0]  rd_addr,
+-  output logic  [DATA_L-1 : 0]  rd_data
+-);
+-
+-  localparam DEPTH = 2**ADDR_L;
+-
+-  logic [DEPTH-1 : 0] [DATA_L-1 : 0] mem_rf;
+-
+-  // read data
+-  always_comb begin
+-    if (rd_en) 
+-      rd_data = mem_rf[rd_addr];
+-    else
+-      rd_data = '0;
+-  end
+-
+-  // write data
+-  always_ff @(posedge clk or negedge rstn) begin
+-    if (!rstn) 
+-      mem_rf <= 'x;
+-    else if (wr_en)
+-      mem_rf[wr_addr] <= wr_data;
+-  end
+-
++// Asynchronous-read register file mapped to distributed RAM.
++// Existing validity state defines usable entries; runtime reset does not erase RAM.
++module register_file #(parameter DATA_L=32, ADDR_L=5)(
++ input clk,rstn,wr_en,input [ADDR_L-1:0] wr_addr,input [DATA_L-1:0] wr_data,
++ input rd_en,input [ADDR_L-1:0] rd_addr,output logic [DATA_L-1:0] rd_data);
++ localparam DEPTH=2**ADDR_L;
++ (* ram_style="distributed" *) logic [DATA_L-1:0] mem_rf [0:DEPTH-1];
++ always_comb rd_data=rd_en ? mem_rf[rd_addr] : '0;
++ always_ff @(posedge clk) if(rstn && wr_en) mem_rf[wr_addr]<=wr_data;
+ endmodule

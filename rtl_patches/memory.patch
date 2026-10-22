@@ -1,0 +1,64 @@
+--- vendor/stspu/hw/rtl/memory.sv	2026-10-21 20:03:09.736698000 +0800
++++ mej_round_20261022/physical_20261022/src/rtl/memory.sv	2026-10-22 10:33:39.928782900 +0800
+@@ -1,46 +1,19 @@
+-/*
+-    * Last modified: 2024/12/2
+-    * Author: Qian Chen
+-*/
+-
+-module idm_memory # (
+-  parameter DATA_L = 32,
+-  parameter ADDR_L = 10,
+-  parameter DEPTH  = 2**10,
+-  parameter RD_LATENCY = 1
+-) (
+-  input                   clk,
+-  input                   rstn,
+-  input                   wr_en,
+-  input   [ADDR_L-1 : 0]  wr_addr,
+-  input   [DATA_L-1 : 0]  wr_data,
+-  input                   rd_en,
+-  input   [ADDR_L-1 : 0]  rd_addr,
+-  output  [DATA_L-1 : 0]  rd_data
+-);
+-
+-  logic [DEPTH-1 : 0] [DATA_L-1 : 0] mem_bsram;
+-  logic [RD_LATENCY-1 : 0] [DATA_L-1 : 0] rd_data_d;
+-
+-  // read data
+-  always_ff @(posedge clk or negedge rstn) begin
+-    if (!rstn)
+-      rd_data_d <= 'x;
+-    else if (rd_en) begin
++// Physical adaptation of the author idm_memory. One-cycle enabled read,
++// read-first collision semantics, no whole-array runtime reset.
++// Reset invalidates the controller; valid contents must be written before use.
++module idm_memory #(
++  parameter DATA_L=32, ADDR_L=10, DEPTH=2**10, RD_LATENCY=1
++)(input clk,rstn,wr_en, input [ADDR_L-1:0] wr_addr,
++  input [DATA_L-1:0] wr_data, input rd_en,
++  input [ADDR_L-1:0] rd_addr, output [DATA_L-1:0] rd_data);
++  (* ram_style="block" *) logic [DATA_L-1:0] mem_bsram [0:DEPTH-1];
++  logic [DATA_L-1:0] rd_data_d [0:RD_LATENCY-1];
++  always_ff @(posedge clk) begin
++    if (rstn && wr_en) mem_bsram[wr_addr] <= wr_data;
++    if (rstn && rd_en) begin
+       rd_data_d[0] <= mem_bsram[rd_addr];
+-      for (integer i = 1; i < RD_LATENCY; ++i) begin
+-        rd_data_d[i] <= rd_data_d[i-1];
+-      end
++      for(integer i=1;i<RD_LATENCY;i=i+1) rd_data_d[i]<=rd_data_d[i-1];
+     end
+   end
+-  assign rd_data = rd_data_d[RD_LATENCY-1];
+-
+-  // write data
+-  always_ff @(posedge clk or negedge rstn) begin
+-    if (!rstn)
+-      mem_bsram <= 'x;
+-    else if (wr_en)
+-      mem_bsram[wr_addr] <= wr_data;
+-  end
+-
++  assign rd_data=rd_data_d[RD_LATENCY-1];
+ endmodule

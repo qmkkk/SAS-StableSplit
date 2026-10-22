@@ -1,0 +1,30 @@
+--- vendor/stspu/hw/rtl/crossbar.sv	2026-10-21 20:03:09.733185400 +0800
++++ mej_round_20261022/physical_20261022/src/rtl/crossbar.sv	2026-10-22 11:03:13.153330800 +0800
+@@ -13,10 +13,27 @@
+   output logic [OUT_PORTS-1 : 0] [WORD_LEN-1 : 0]          output_words
+ );
+ 
++`ifdef PHYSICAL_ONEHOT
++  // Decode once per destination and share each select across all data bits.
++  for (genvar o=0; o<OUT_PORTS; o++) begin: destinations
++    wire [IN_PORTS-1:0] selected;
++    for (genvar i=0; i<IN_PORTS; i++) begin: decode
++      assign selected[i] = (sel[o] == $clog2(IN_PORTS)'(i));
++    end
++    for (genvar b=0; b<WORD_LEN; b++) begin: bits
++      wire [IN_PORTS-1:0] gated;
++      for (genvar i=0; i<IN_PORTS; i++) begin: sources
++        assign gated[i] = input_words[i][b] & selected[i];
++      end
++      assign output_words[o][b] = |gated;
++    end
++  end
++`else
+   always_comb begin
+     for (integer i = 0; i < OUT_PORTS; ++i) begin
+       output_words[i] = input_words[sel[i]];
+     end
+   end
++`endif
+ 
+ endmodule

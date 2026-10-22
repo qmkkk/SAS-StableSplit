@@ -1,0 +1,440 @@
+--- vendor/stspu/hw/rtl/ins_fetcher.sv	2026-10-21 20:03:09.736698000 +0800
++++ mej_round_20261022/physical_20261022/src/rtl/ins_fetcher.sv	2026-10-22 10:34:42.935740100 +0800
+@@ -1,225 +1,212 @@
+-/*
+-    * Last modified: 2024/12/5
+-    * Author: Qian Chen
+-*/
+-
+-`include "../common_pkg.sv"
+-
+-module ins_fetcher # (
+-  parameter RD_LATENCY_ISM = 1,
+-  parameter INS_L = 31,
+-  parameter g_N = 6,
+-  parameter g_M = 5,
+-  parameter g_K = 3,
+-  parameter g_T = 7
+-) (
+-  input                     	clk,
+-  input                     	rstn,
+-
+-  input                       run,
+-  input      		[INS_L-1 : 0]	im_rd_data, 	// im_rd_en 拉高后, RD_LATENCY_ISM 周期后才能读到数据, 但支持流水线读取
+-
+-	output	logic								im_rd_en,
+-	output 	logic [INS_L-1 : 0]	ins, 				  // 每个周期出一个新指令
+-
+-  output  logic               finish        // finish 信号需要在本周期立即给出
+-);
+-
+-  logic               im_rd_en_d;
+-	logic [INS_L-1 : 0]	ins_d;
+-	
+-	// im_rd_en & ins
+-  assign im_rd_en = run && im_rd_en_d;
+-	always_ff @(posedge clk or negedge rstn) begin
+-		if (!rstn)
+-      ins <= 'd0;
+-    else if (run)
+-      ins <= ins_d;
+-	end
+-
+-  // 生成 finish 控制信号
+-  wire        o_sel_en = ins_d[INS_L-5];
+-  wire [1:0]  PE_en    = ins_d[INS_L-10 -: 2];
+-  // 
+-  logic finish_state;
+-	always_ff @(posedge clk or negedge rstn) begin
+-    case ({finish_state})
+-      1'b0:     begin 
+-                  if ({o_sel_en, PE_en} == 3'b010) begin
+-                    finish        <= 1'b1;
+-                    finish_state  <= 1'b1;
+-                  end
+-                end
+-      1'b1:     begin 
+-                  if (!rstn) begin
+-                    finish        <= 1'b0;
+-                    finish_state  <= 1'b0;
+-                  end
+-                end
+-      default:  begin 
+-                  finish        <= 1'b0;
+-                  finish_state  <= 1'b0;
+-                end
+-    endcase
+-	end
+-
+-	// im_rd_data --> ins_d 和 im_rd_en_d
+-	// Combinational blocks
+-`ifdef INS_COMPRESS
+-  /*
+-    根据 opcode, 对 im_rd_data 适当移位, 送给 ins_d
+-    im_rd_en_d 拉高条件: im_rd_data 在去除一个新指令后, 剩余的数据不足以支撑一个指令
+-    暂时只支持 RD_LATENCY_ISM == 1
+-  */
+-  localparam INS_2L = 2*INS_L;
+-
+-  logic                       im_rd_en_prev;      // 上一个周期的 im_rd_en_d, 用于判断当前输入的 im_rd_data 是否为新数据
+-  logic [INS_2L-1 : 0]        ins_reg;            // 指令管道
+-  logic [$clog2(INS_2L) : 0]  ins_reg_valid_cnt;  // ins_reg [INS_2L-1 -: ins_reg_valid_cnt] 为有效数据
+-
+-  // 1. 计算 ins_reg_curr
+-  logic [INS_2L-1 : 0]  ins_reg_curr;
+-  logic [INS_2L-1 : 0]  ins_reg_curr_t1, ins_reg_curr_t2, ins_reg_curr_t3, ins_reg_curr_t4;
+-  always_comb begin
+-    if (im_rd_en_prev) begin
+-      // ins_reg_curr = {ins_reg[INS_2L-1 -: ins_reg_valid_cnt], im_rd_data, {(INS_L-ins_reg_valid_cnt){1'b0}}};
+-      ins_reg_curr_t1 = ins_reg >> (INS_2L - ins_reg_valid_cnt);
+-      ins_reg_curr_t2 = ins_reg_curr_t1 << (INS_2L - ins_reg_valid_cnt);
+-      ins_reg_curr_t3 = {im_rd_data, {INS_L{1'b0}}};
+-      ins_reg_curr_t4 = ins_reg_curr_t3 >> ins_reg_valid_cnt;
+-      ins_reg_curr = ins_reg_curr_t2 + ins_reg_curr_t4;
+-    end else begin
+-      ins_reg_curr = ins_reg;
+-    end
+-  end
+-
+-  // 2. 计算 curr_ins_len
+-  logic [$clog2(INS_L) : 0] curr_ins_len;
+-  get_ins_len # (
+-    .INS_L  (INS_L)
+-  ) get_ins_len_curr (
+-    .opcode   (ins_reg_curr[INS_2L-1 -: 5]),
+-    .ins_len  (curr_ins_len)
+-  );
+-
+-  // 3. 计算 ins_reg_d, ins_reg_valid_cnt_d
+-  logic [INS_2L-1 : 0]       ins_reg_d;
+-  logic [$clog2(INS_2L) : 0] ins_reg_valid_cnt_d;
+-  always_comb begin
+-    // 计算 ins_reg_d
+-    if (!run)
+-      ins_reg_d = 'x;
+-    else
+-      ins_reg_d = ins_reg_curr << curr_ins_len;
+-    // 计算 ins_reg_valid_cnt_d
+-    if (!run)
+-      ins_reg_valid_cnt_d = 'd0;
+-    else
+-      if (im_rd_en_prev)
+-        ins_reg_valid_cnt_d = ins_reg_valid_cnt + INS_L - curr_ins_len;
+-      else
+-        ins_reg_valid_cnt_d = ins_reg_valid_cnt - curr_ins_len;
+-  end
+-
+-  // 4. 计算 ins_d, im_rd_en_d
+-  // 先计算下个周期指令长度, 不一定被使用
+-  logic [$clog2(INS_L) : 0] next_ins_len;
+-  get_ins_len # (
+-    .INS_L  (INS_L)
+-  ) get_ins_len_next (
+-    .opcode   (ins_reg_d[INS_2L-1 -: 5]),
+-    .ins_len  (next_ins_len)
+-  );
+-  // 
+-  logic [INS_2L-1 : 0] ins_d_t1, ins_d_t2;
+-  always_comb begin
+-    // ins_d = {ins_reg_curr[INS_2L-1 -: curr_ins_len], {(INS_L-curr_ins_len){1'b0}}};
+-    ins_d_t1 = ins_reg_curr >> (INS_2L-curr_ins_len);
+-    ins_d_t2 = ins_d_t1 << (INS_2L-curr_ins_len);
+-    ins_d = ins_d_t2[INS_2L-1 -: INS_L];
+-    // ins_d = ins_reg_curr[INS_2L-1 -: INS_L]; // 后面几位即使不是0, 也不影响指令解码
+-    // 计算 im_rd_en_d
+-    if (run && (ins_reg_valid_cnt_d <= 'd5 || ins_reg_valid_cnt_d < next_ins_len))
+-      im_rd_en_d = 1'b1;
+-    else
+-      im_rd_en_d = 1'b0;
+-  end
+-
+-  // 5. 更新 ins_reg, ins_reg_valid_cnt, im_rd_en_prev
+-	always_ff @(posedge clk or negedge rstn) begin
+-		if (!rstn) begin
+-      ins_reg           <= 'x;
+-      ins_reg_valid_cnt <= 'd0;
+-      im_rd_en_prev     <= 1'b0;
+-    end else if (run) begin
+-      ins_reg           <= ins_reg_d;
+-      ins_reg_valid_cnt <= ins_reg_valid_cnt_d;
+-      im_rd_en_prev     <= im_rd_en_d;
+-    end
+-	end
+-
+-`else
+-
+-  always_comb begin
+-    im_rd_en_d = 1'b1;
+-    ins_d = im_rd_data;
+-  end
+-
+-`endif
+-
+-endmodule
+-
+-`ifdef INS_COMPRESS
+-
+-module get_ins_len # (
+-  parameter INS_L = 31
+-) (
+-  input   [4:0]                opcode,
+-  output  [$clog2(INS_L) : 0]  ins_len
+-);
+-
+-  logic [$clog2(INS_L) : 0] ins_len_d;
+-  always_comb begin
+-    case (opcode)
+-      OPCODE_0  : ins_len_d = OPCODE_0_L;
+-      OPCODE_1  : ins_len_d = OPCODE_1_L;
+-      OPCODE_2  : ins_len_d = OPCODE_2_L;
+-      OPCODE_3  : ins_len_d = OPCODE_3_L;
+-      OPCODE_4  : ins_len_d = OPCODE_4_L;
+-      OPCODE_5  : ins_len_d = OPCODE_5_L;
+-      OPCODE_6  : ins_len_d = OPCODE_6_L;
+-      OPCODE_7  : ins_len_d = OPCODE_7_L;
+-      OPCODE_8  : ins_len_d = OPCODE_8_L;
+-      OPCODE_9  : ins_len_d = OPCODE_9_L;
+-      OPCODE_10 : ins_len_d = OPCODE_10_L;
+-      OPCODE_11 : ins_len_d = OPCODE_11_L;
+-      OPCODE_12 : ins_len_d = OPCODE_12_L;
+-      OPCODE_13 : ins_len_d = OPCODE_13_L;
+-      OPCODE_14 : ins_len_d = OPCODE_14_L;
+-      OPCODE_15 : ins_len_d = OPCODE_15_L;
+-      OPCODE_16 : ins_len_d = OPCODE_16_L;
+-      OPCODE_17 : ins_len_d = OPCODE_17_L;
+-      OPCODE_18 : ins_len_d = OPCODE_18_L;
+-      OPCODE_19 : ins_len_d = OPCODE_19_L;
+-      OPCODE_20 : ins_len_d = OPCODE_20_L;
+-      OPCODE_21 : ins_len_d = OPCODE_21_L;
+-      OPCODE_22 : ins_len_d = OPCODE_22_L;
+-      OPCODE_23 : ins_len_d = OPCODE_23_L;
+-      OPCODE_24 : ins_len_d = OPCODE_24_L;
+-      OPCODE_25 : ins_len_d = OPCODE_25_L;
+-      OPCODE_26 : ins_len_d = OPCODE_26_L;
+-      OPCODE_27 : ins_len_d = OPCODE_27_L;
+-      OPCODE_28 : ins_len_d = OPCODE_28_L;
+-      OPCODE_29 : ins_len_d = OPCODE_29_L;
+-      OPCODE_30 : ins_len_d = OPCODE_30_L;
+-      OPCODE_31 : ins_len_d = OPCODE_31_L;
+-
+-      default: ins_len_d = 'd0;
+-    endcase
+-  end
+-
+-  assign ins_len = ins_len_d;
+-
+-endmodule
+-
+-`endif
++/*
++    * Last modified: 2024/12/5
++    * Author: Qian Chen
++*/
++
++`include "../common_pkg.sv"
++
++module ins_fetcher # (
++  parameter RD_LATENCY_ISM = 1,
++  parameter INS_L = 31,
++  parameter g_N = 6,
++  parameter g_M = 5,
++  parameter g_K = 3,
++  parameter g_T = 7
++) (
++  input                     	clk,
++  input                     	rstn,
++
++  input                       run,
++  input      		[INS_L-1 : 0]	im_rd_data, 	// im_rd_en 拉高后, RD_LATENCY_ISM 周期后才能读到数据, 但支持流水线读取
++
++	output	logic								im_rd_en,
++	output 	logic [INS_L-1 : 0]	ins, 				  // 每个周期出一个新指令
++
++  output  logic               finish        // finish 信号需要在本周期立即给出
++);
++
++  logic               im_rd_en_d;
++	logic [INS_L-1 : 0]	ins_d;
++	
++	// im_rd_en & ins
++  assign im_rd_en = run && im_rd_en_d;
++	always_ff @(posedge clk or negedge rstn) begin
++		if (!rstn)
++      ins <= 'd0;
++    else if (run)
++      ins <= ins_d;
++	end
++
++  // 生成 finish 控制信号
++  wire        o_sel_en = ins_d[INS_L-5];
++  wire [1:0]  PE_en    = ins_d[INS_L-10 -: 2];
++  // 
++  logic finish_state;
++  // Physical adapter: conventional explicit asynchronous reset.
++  always_ff @(posedge clk or negedge rstn) begin
++    if (!rstn) begin finish <= 1'b0; finish_state <= 1'b0; end
++    else if (!finish_state && {o_sel_en, PE_en} == 3'b010) begin
++      finish <= 1'b1; finish_state <= 1'b1;
++    end
++  end
++
++	// im_rd_data --> ins_d 和 im_rd_en_d
++	// Combinational blocks
++`ifdef INS_COMPRESS
++  /*
++    根据 opcode, 对 im_rd_data 适当移位, 送给 ins_d
++    im_rd_en_d 拉高条件: im_rd_data 在去除一个新指令后, 剩余的数据不足以支撑一个指令
++    暂时只支持 RD_LATENCY_ISM == 1
++  */
++  localparam INS_2L = 2*INS_L;
++
++  logic                       im_rd_en_prev;      // 上一个周期的 im_rd_en_d, 用于判断当前输入的 im_rd_data 是否为新数据
++  logic [INS_2L-1 : 0]        ins_reg;            // 指令管道
++  logic [$clog2(INS_2L) : 0]  ins_reg_valid_cnt;  // ins_reg [INS_2L-1 -: ins_reg_valid_cnt] 为有效数据
++
++  // 1. 计算 ins_reg_curr
++  logic [INS_2L-1 : 0]  ins_reg_curr;
++  logic [INS_2L-1 : 0]  ins_reg_curr_t1, ins_reg_curr_t2, ins_reg_curr_t3, ins_reg_curr_t4;
++  always_comb begin
++    if (im_rd_en_prev) begin
++      // ins_reg_curr = {ins_reg[INS_2L-1 -: ins_reg_valid_cnt], im_rd_data, {(INS_L-ins_reg_valid_cnt){1'b0}}};
++      ins_reg_curr_t1 = ins_reg >> (INS_2L - ins_reg_valid_cnt);
++      ins_reg_curr_t2 = ins_reg_curr_t1 << (INS_2L - ins_reg_valid_cnt);
++      ins_reg_curr_t3 = {im_rd_data, {INS_L{1'b0}}};
++      ins_reg_curr_t4 = ins_reg_curr_t3 >> ins_reg_valid_cnt;
++      ins_reg_curr = ins_reg_curr_t2 + ins_reg_curr_t4;
++    end else begin
++      ins_reg_curr = ins_reg;
++    end
++  end
++
++  // 2. 计算 curr_ins_len
++  logic [$clog2(INS_L) : 0] curr_ins_len;
++  get_ins_len # (
++    .INS_L  (INS_L)
++  ) get_ins_len_curr (
++    .opcode   (ins_reg_curr[INS_2L-1 -: 5]),
++    .ins_len  (curr_ins_len)
++  );
++
++  // 3. 计算 ins_reg_d, ins_reg_valid_cnt_d
++  logic [INS_2L-1 : 0]       ins_reg_d;
++  logic [$clog2(INS_2L) : 0] ins_reg_valid_cnt_d;
++  always_comb begin
++    // 计算 ins_reg_d
++    if (!run)
++      ins_reg_d = 'x;
++    else
++      ins_reg_d = ins_reg_curr << curr_ins_len;
++    // 计算 ins_reg_valid_cnt_d
++    if (!run)
++      ins_reg_valid_cnt_d = 'd0;
++    else
++      if (im_rd_en_prev)
++        ins_reg_valid_cnt_d = ins_reg_valid_cnt + INS_L - curr_ins_len;
++      else
++        ins_reg_valid_cnt_d = ins_reg_valid_cnt - curr_ins_len;
++  end
++
++  // 4. 计算 ins_d, im_rd_en_d
++  // 先计算下个周期指令长度, 不一定被使用
++  logic [$clog2(INS_L) : 0] next_ins_len;
++  get_ins_len # (
++    .INS_L  (INS_L)
++  ) get_ins_len_next (
++    .opcode   (ins_reg_d[INS_2L-1 -: 5]),
++    .ins_len  (next_ins_len)
++  );
++  // 
++  logic [INS_2L-1 : 0] ins_d_t1, ins_d_t2;
++  always_comb begin
++    // ins_d = {ins_reg_curr[INS_2L-1 -: curr_ins_len], {(INS_L-curr_ins_len){1'b0}}};
++    ins_d_t1 = ins_reg_curr >> (INS_2L-curr_ins_len);
++    ins_d_t2 = ins_d_t1 << (INS_2L-curr_ins_len);
++    ins_d = ins_d_t2[INS_2L-1 -: INS_L];
++    // ins_d = ins_reg_curr[INS_2L-1 -: INS_L]; // 后面几位即使不是0, 也不影响指令解码
++    // 计算 im_rd_en_d
++    if (run && (ins_reg_valid_cnt_d <= 'd5 || ins_reg_valid_cnt_d < next_ins_len))
++      im_rd_en_d = 1'b1;
++    else
++      im_rd_en_d = 1'b0;
++  end
++
++  // 5. 更新 ins_reg, ins_reg_valid_cnt, im_rd_en_prev
++	always_ff @(posedge clk or negedge rstn) begin
++		if (!rstn) begin
++      ins_reg           <= 'x;
++      ins_reg_valid_cnt <= 'd0;
++      im_rd_en_prev     <= 1'b0;
++    end else if (run) begin
++      ins_reg           <= ins_reg_d;
++      ins_reg_valid_cnt <= ins_reg_valid_cnt_d;
++      im_rd_en_prev     <= im_rd_en_d;
++    end
++	end
++
++`else
++
++  always_comb begin
++    im_rd_en_d = 1'b1;
++    ins_d = im_rd_data;
++  end
++
++`endif
++
++endmodule
++
++`ifdef INS_COMPRESS
++
++module get_ins_len # (
++  parameter INS_L = 31
++) (
++  input   [4:0]                opcode,
++  output  [$clog2(INS_L) : 0]  ins_len
++);
++
++  logic [$clog2(INS_L) : 0] ins_len_d;
++  always_comb begin
++    case (opcode)
++      OPCODE_0  : ins_len_d = OPCODE_0_L;
++      OPCODE_1  : ins_len_d = OPCODE_1_L;
++      OPCODE_2  : ins_len_d = OPCODE_2_L;
++      OPCODE_3  : ins_len_d = OPCODE_3_L;
++      OPCODE_4  : ins_len_d = OPCODE_4_L;
++      OPCODE_5  : ins_len_d = OPCODE_5_L;
++      OPCODE_6  : ins_len_d = OPCODE_6_L;
++      OPCODE_7  : ins_len_d = OPCODE_7_L;
++      OPCODE_8  : ins_len_d = OPCODE_8_L;
++      OPCODE_9  : ins_len_d = OPCODE_9_L;
++      OPCODE_10 : ins_len_d = OPCODE_10_L;
++      OPCODE_11 : ins_len_d = OPCODE_11_L;
++      OPCODE_12 : ins_len_d = OPCODE_12_L;
++      OPCODE_13 : ins_len_d = OPCODE_13_L;
++      OPCODE_14 : ins_len_d = OPCODE_14_L;
++      OPCODE_15 : ins_len_d = OPCODE_15_L;
++      OPCODE_16 : ins_len_d = OPCODE_16_L;
++      OPCODE_17 : ins_len_d = OPCODE_17_L;
++      OPCODE_18 : ins_len_d = OPCODE_18_L;
++      OPCODE_19 : ins_len_d = OPCODE_19_L;
++      OPCODE_20 : ins_len_d = OPCODE_20_L;
++      OPCODE_21 : ins_len_d = OPCODE_21_L;
++      OPCODE_22 : ins_len_d = OPCODE_22_L;
++      OPCODE_23 : ins_len_d = OPCODE_23_L;
++      OPCODE_24 : ins_len_d = OPCODE_24_L;
++      OPCODE_25 : ins_len_d = OPCODE_25_L;
++      OPCODE_26 : ins_len_d = OPCODE_26_L;
++      OPCODE_27 : ins_len_d = OPCODE_27_L;
++      OPCODE_28 : ins_len_d = OPCODE_28_L;
++      OPCODE_29 : ins_len_d = OPCODE_29_L;
++      OPCODE_30 : ins_len_d = OPCODE_30_L;
++      OPCODE_31 : ins_len_d = OPCODE_31_L;
++
++      default: ins_len_d = 'd0;
++    endcase
++  end
++
++  assign ins_len = ins_len_d;
++
++endmodule
++
++`endif

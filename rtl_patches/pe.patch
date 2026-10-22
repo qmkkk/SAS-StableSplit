@@ -1,0 +1,63 @@
+--- vendor/stspu/hw/rtl/pe.sv	2026-10-21 20:03:09.737698000 +0800
++++ mej_round_20261022/physical_20261022/src/rtl/pe.sv	2026-10-22 10:59:54.606718300 +0800
+@@ -20,9 +20,8 @@
+   wire [WORD_LEN-1 : 0]  add_in1;
+   wire [WORD_LEN-1 : 0]  add_in2;
+   wire [WORD_LEN-1 : 0]  add_out;
+-
+-  wire [WORD_LEN-1 : 0]  mul_in1;
+-  wire [WORD_LEN-1 : 0]  mul_out;
++  wire [WORD_LEN-1 : 0]  pre_mul_out;
++  wire [WORD_LEN-1 : 0]  post_mul_out;
+ 
+   assign psum_inv = {~psum[WORD_LEN-1], psum[WORD_LEN-2 : 0]};
+ 
+@@ -37,34 +36,36 @@
+   mux2_1 # (WORD_LEN) mux2_1_ins_add_in2 (
+     .sel      (ct),
+     .data_in0 (xb),
+-    .data_in1 (mul_out),
++    .data_in1 (pre_mul_out),
+     .data_out (add_in2)
+   );
+ 
+-  mux2_1 # (WORD_LEN) mux2_1_ins_mul_in1 (
+-    .sel      (ct),
+-    .data_in0 (add_out),
+-    .data_in1 (xb),
+-    .data_out (mul_in1)
+-  );
+-
+   mux2_1 # (WORD_LEN) mux2_1_ins_out (
+     .sel      (ct),
+-    .data_in0 (mul_out),
++    .data_in0 (post_mul_out),
+     .data_in1 (add_out),
+     .data_out (out)
+   );
+ 
++  // Two directed multiplier paths remove the structural add<->multiply loop
++  // of the shared zero-latency PE without adding a cycle.  ct=0 evaluates
++  // (xb-psum)*Lij; ct=1 evaluates psum+(xb*Lij).
++  fpu_mul # (EXP_L, MNT_L) flt_mul_pre (
++    .in1  (xb),
++    .in2  (Lij),
++    .out  (pre_mul_out)
++  );
++
+   fpu_add # (EXP_L, MNT_L) flt_add_inst (
+     .in1  (add_in1),
+     .in2  (add_in2),
+     .out  (add_out)
+   );
+ 
+-  fpu_mul # (EXP_L, MNT_L) flt_mul_inst (
+-    .in1  (mul_in1),
++  fpu_mul # (EXP_L, MNT_L) flt_mul_post (
++    .in1  (add_out),
+     .in2  (Lij),
+-    .out  (mul_out)
++    .out  (post_mul_out)
+   );
+ 
+ endmodule
